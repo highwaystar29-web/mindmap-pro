@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+<meta charset="UTF-8">
+<title>MindMap Pro</title>
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+
+<style>
+body{
+  margin:0;
+  overflow:hidden;
+  font-family:sans-serif;
+  background:#121212;
+  color:#fff;
+}
+#toolbar{
+  position:fixed;
+  top:10px;
+  left:10px;
+  z-index:1000;
+}
+button{
+  margin-right:5px;
+  padding:6px 10px;
+  border:none;
+  border-radius:6px;
+  cursor:pointer;
+}
+#canvas-wrapper{
+  width:100vw;
+  height:100vh;
+  overflow:hidden;
+}
+#canvas{
+  position:absolute;
+  transform-origin:0 0;
+}
+.node{
+  position:absolute;
+  padding:8px 14px;
+  border-radius:20px;
+  color:#fff;
+  cursor:move;
+  user-select:text;
+  white-space:pre;
+  min-width:60px;
+}
+.node:focus{
+  outline:none;
+}
+svg{
+  position:absolute;
+  pointer-events:none;
+}
+line{
+  stroke-width:2;
+}
+</style>
+
+</head>
+<body>
+
+<div id="toolbar">
+  <button onclick="saveMap()">保存</button>
+  <button onclick="loadMap()">読み込み</button>
+  <input type="file" id="fileInput" style="display:none">
+</div>
+
+<div id="canvas-wrapper">
+  <svg id="lines"></svg>
+  <div id="canvas"></div>
+</div>
+
+<script>
+let canvas = document.getElementById("canvas");
+let svg = document.getElementById("lines");
+let nodes = [];
+let connections = [];
+let scale = 1;
+
+/* 🌈 色パレット */
+const branchColors = [
+  "#ff6b6b",
+  "#ffd93d",
+  "#6bcB77",
+  "#4d96ff",
+  "#b983ff",
+  "#ff8fab",
+  "#00c2a8"
+];
+
+/* ノード作成 */
+function createNode(text, x, y, parent=null){
+  let div = document.createElement("div");
+  div.className = "node";
+  div.contentEditable = true;
+  div.innerText = text || "New Node";
+  div.style.left = x + "px";
+  div.style.top = y + "px";
+  div.dataset.id = Date.now() + Math.random();
+
+  /* 🌈 色設定 */
+  if(parent){
+    div.dataset.color = parent.dataset.color;
+  }else{
+    let colorIndex = nodes.length % branchColors.length;
+    div.dataset.color = branchColors[colorIndex];
+  }
+  div.style.background = div.dataset.color;
+
+  canvas.appendChild(div);
+  nodes.push(div);
+
+  if(parent){
+    connections.push({from: parent.dataset.id, to: div.dataset.id});
+  }
+
+  makeDraggable(div);
+  updateLines();
+
+  div.onkeydown = (e)=>{
+
+    // Enter → 子ノード
+    if(e.key==="Enter" && !e.shiftKey){
+      e.preventDefault();
+
+      let childCount = connections.filter(c => c.from === div.dataset.id).length;
+
+      createNode(
+        "Child",
+        div.offsetLeft + 180,
+        div.offsetTop + (childCount * 60),
+        div
+      );
+    }
+
+    // Shift+Enter → 改行
+    if(e.key==="Enter" && e.shiftKey){
+      e.preventDefault();
+      document.execCommand("insertLineBreak");
+    }
+
+    // Delete → 削除
+    if(e.key==="Delete"){
+      deleteNode(div);
+    }
+  };
+
+  return div;
+}
+
+/* ノード削除 */
+function deleteNode(node){
+  connections = connections.filter(c=>c.from!==node.dataset.id && c.to!==node.dataset.id);
+  canvas.removeChild(node);
+  nodes = nodes.filter(n=>n!==node);
+  updateLines();
+}
+
+/* 📱＋🖱 ドラッグ対応 */
+function makeDraggable(el){
+  let offsetX, offsetY;
+  let isDragging = false;
+
+  const start = (e)=>{
+    let t = e.touches ? e.touches[0] : e;
+    offsetX = t.clientX - el.offsetLeft * scale;
+    offsetY = t.clientY - el.offsetTop * scale;
+    isDragging = true;
+  };
+
+  const move = (e)=>{
+    if(!isDragging) return;
+    let t = e.touches ? e.touches[0] : e;
+    el.style.left = (t.clientX/scale - offsetX) + "px";
+    el.style.top = (t.clientY/scale - offsetY) + "px";
+    updateLines();
+  };
+
+  const end = ()=>{
+    isDragging = false;
+  };
+
+  el.addEventListener("mousedown", start);
+  el.addEventListener("touchstart", start);
+
+  document.addEventListener("mousemove", move);
+  document.addEventListener("touchmove", move);
+
+  document.addEventListener("mouseup", end);
+  document.addEventListener("touchend", end);
+}
+
+/* 線更新 */
+function updateLines(){
+  svg.innerHTML="";
+  svg.setAttribute("width", window.innerWidth);
+  svg.setAttribute("height", window.innerHeight);
+
+  connections.forEach(c=>{
+    let from = nodes.find(n=>n.dataset.id===c.from);
+    let to = nodes.find(n=>n.dataset.id===c.to);
+    if(!from || !to) return;
+
+    let line = document.createElementNS("http://www.w3.org/2000/svg","line");
+
+    let x1 = (from.offsetLeft + from.offsetWidth/2)*scale;
+    let y1 = (from.offsetTop + from.offsetHeight/2)*scale;
+    let x2 = (to.offsetLeft + to.offsetWidth/2)*scale;
+    let y2 = (to.offsetTop + to.offsetHeight/2)*scale;
+
+    line.setAttribute("x1",x1);
+    line.setAttribute("y1",y1);
+    line.setAttribute("x2",x2);
+    line.setAttribute("y2",y2);
+
+    line.setAttribute("stroke", from.dataset.color);
+
+    svg.appendChild(line);
+  });
+}
+
+/* 🔍 ズーム */
+document.getElementById("canvas-wrapper").addEventListener("wheel",(e)=>{
+  e.preventDefault();
+  scale += e.deltaY * -0.001;
+  scale = Math.min(Math.max(.3, scale), 3);
+  canvas.style.transform = `scale(${scale})`;
+  updateLines();
+});
+
+/* 💾 保存 */
+function saveMap(){
+  let data = {
+    nodes: nodes.map(n=>({
+      id:n.dataset.id,
+      text:n.innerText,
+      x:n.offsetLeft,
+      y:n.offsetTop,
+      color:n.dataset.color
+    })),
+    connections: connections
+  };
+
+  let blob = new Blob([JSON.stringify(data)],{type:"application/json"});
+  let a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "mindmap.json";
+  a.click();
+}
+
+/* 📂 読み込み */
+function loadMap(){
+  document.getElementById("fileInput").click();
+}
+
+document.getElementById("fileInput").addEventListener("change",(e)=>{
+  let file = e.target.files[0];
+  if(!file) return;
+
+  let reader = new FileReader();
+  reader.onload = function(evt){
+    let data = JSON.parse(evt.target.result);
+
+    canvas.innerHTML="";
+    nodes=[];
+    connections=data.connections;
+
+    data.nodes.forEach(n=>{
+      let node = createNode(n.text,n.x,n.y);
+      node.dataset.id=n.id;
+      node.dataset.color=n.color;
+      node.style.background=n.color;
+    });
+
+    updateLines();
+  };
+  reader.readAsText(file);
+});
+
+/* ダブルクリックでノード追加 */
+canvas.addEventListener("dblclick",(e)=>{
+  createNode("New", e.pageX/scale, e.pageY/scale);
+});
+
+/* 初期ノード */
+let root = createNode("Central Topic", window.innerWidth/2-60, window.innerHeight/2-20);
+root.dataset.color = "#444";
+root.style.background = "#444";
+
+</script>
+
+</body>
+</html>
